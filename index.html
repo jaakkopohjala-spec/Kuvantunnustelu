@@ -53,7 +53,7 @@
       <h3>Windows-näppäimistö</h3>
       <p class="small">Klikkaa kuva-aluetta ja käytä <span class="kbd">←</span> <span class="kbd">→</span> <span class="kbd">↑</span> <span class="kbd">↓</span>. <span class="kbd">Shift</span> nopeuttaa, <span class="kbd">Alt</span> hidastaa. Hiiri toimii edelleen normaalisti.</p>
       <h3>iPhone</h3>
-      <p class="small">Lataa kuva VoiceOver päällä, paina iPhone-tarkastelutilaa, anna lyhyen testipiippauksen kuulua ja kytke VoiceOver pois päältä. Tila suurentaa kuvan lähes koko näytölle ja estää sivun vieritystä.</p>
+      <p class="small">1. Lataa kuva. 2. Paina <strong>iPhone-tarkastelutila</strong> -nappia — kuulet lyhyen piippauksen jos ääni toimii. 3. Liikuta sormea kuvan päällä. Puhe ja tekstiselosteet on hiljennetty tarkastelutilassa.</p>
     </aside>
   </div>
 </main>
@@ -63,7 +63,9 @@ let imageReady=false,imageData=null,audioCtx=null,oscillator=null,noiseSource=nu
 function setOutputs(){volumeOut.textContent=volume.value+' %';sensitivityOut.textContent=sensitivity.value+' %';smoothingOut.textContent=smoothing.value+' %';if(mainGain&&audioCtx&&isAudioOn)mainGain.gain.setTargetAtTime(Number(volume.value)/100*.3,audioCtx.currentTime,.02)}volume.addEventListener('input',setOutputs);sensitivity.addEventListener('input',setOutputs);smoothing.addEventListener('input',setOutputs);setOutputs();support.innerHTML='vibrate'in navigator?'<span class="ok">●</span> Värinä-API löytyy':'<span class="warn">●</span> Ei värinä-API:a';
 function createNoiseBuffer(c){const b=c.createBuffer(1,c.sampleRate*1.5,c.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b}
 
-// Rakentaa AudioContext-graafin synkronisesti – kutsuttava suoraan käyttäjäeleen sisältä
+// Rakentaa AudioContext-graafin synkronisesti.
+// iOS Safari: AudioContext luodaan ja ääni käynnistetään ilman yhtään await/then,
+// suoraan käyttäjäeleen (touchend / click) sisällä.
 function buildAudioGraph(){
   audioCtx=new (window.AudioContext||window.webkitAudioContext)();
   oscillator=audioCtx.createOscillator();oscillator.type='sine';
@@ -73,65 +75,76 @@ function buildAudioGraph(){
   noiseSource=audioCtx.createBufferSource();noiseSource.buffer=createNoiseBuffer(audioCtx);noiseSource.loop=true;
   oscillator.connect(mainGain).connect(audioCtx.destination);
   noiseSource.connect(filter).connect(noiseGain).connect(audioCtx.destination);
-  oscillator.start();noiseSource.start();
+  // Käynnistetään äänisolmut heti – iOS aktivoi AudioContextin tässä
+  oscillator.start();
+  noiseSource.start();
+  // Asetetaan gain heti pieneksi (ei nollaksi) jotta iOS ei hiljennä contextia
+  mainGain.gain.setValueAtTime(0.001,audioCtx.currentTime);
 }
 
-// Soittaa lyhyen testipiipin kun ääni on jo käynnissä
 function playTestBeep(){
-  if(!audioCtx||!isAudioOn)return;
+  if(!audioCtx)return;
+  const vol=Number(volume.value)/100*.4;
+  mainGain.gain.cancelScheduledValues(audioCtx.currentTime);
+  mainGain.gain.setValueAtTime(vol,audioCtx.currentTime);
   oscillator.frequency.setValueAtTime(660,audioCtx.currentTime);
-  mainGain.gain.setValueAtTime(Number(volume.value)/100*.35,audioCtx.currentTime);
-  mainGain.gain.setTargetAtTime(0.0001,audioCtx.currentTime+.18,.04);
-  setTimeout(()=>{if(isAudioOn)setOutputs()},420);
+  mainGain.gain.setTargetAtTime(0.001,audioCtx.currentTime+.22,.05);
 }
 
-// Normaali äänen käynnistys (napit, kosketukset) – ei iPhone-tarkastelutilaan
 function startAudio(test=false){
   try{
-    if(!audioCtx)buildAudioGraph();  // synkroninen, heti käyttäjäeleen sisällä
-    // resume() voi olla promise iOS:lla; käsitellään .then-ketjulla ilman async/await
-    const resumePromise=audioCtx.resume();
-    const afterResume=()=>{
-      isAudioOn=true;
-      audioButton.textContent='Pysäytä ääni';
-      mainGain.gain.setTargetAtTime(Number(volume.value)/100*.3,audioCtx.currentTime,.02);
-      if(test)playTestBeep();
-      live.textContent=imageReady?'Ääni päällä. Tunnustele kuvaa.':'Ääni päällä. Lataa kuva tai luo demokuva.';
-    };
-    if(resumePromise&&typeof resumePromise.then==='function'){resumePromise.then(afterResume).catch(e=>{live.textContent='Äänen käynnistys epäonnistui.';details.textContent=e&&e.message?e.message:''});}
-    else{afterResume();}
-    return true;
-  }catch(e){live.textContent='Äänen käynnistys epäonnistui tässä selaimessa.';details.textContent=e&&e.message?e.message:'';return false;}
-}
-
-function stopAudio(){if(!audioCtx)return;mainGain.gain.setTargetAtTime(0,audioCtx.currentTime,.03);noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.03);isAudioOn=false;audioButton.textContent='Käynnistä ääni'}
-audioButton.addEventListener('click',()=>isAudioOn?stopAudio():startAudio(true));
-
-// iPhone-tarkastelutila: AudioContext rakennetaan ja resumed täysin synkronisesti
-// käyttäjäeleen sisällä – ei asyncia, ei awaitia, ei Promiseja ennen resume()
-function enterInspect(){
-  if(!imageReady){live.textContent='Lataa ensin kuva tai luo demokuva.';return;}
-  // 1) Rakenna graafi synkronisesti (jos ei vielä olemassa)
-  if(!audioCtx)buildAudioGraph();
-  // 2) resume() – iOS hyväksyy tämän koska ollaan suoraan click-handlerissa
-  audioCtx.resume().then(()=>{
+    if(!audioCtx)buildAudioGraph();
+    // resume() ilman .then – iOS vaatii synkronisen suorituksen
+    audioCtx.resume();
     isAudioOn=true;
     audioButton.textContent='Pysäytä ääni';
-    mainGain.gain.setTargetAtTime(Number(volume.value)/100*.3,audioCtx.currentTime,.02);
-    playTestBeep();
+    mainGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    mainGain.gain.setValueAtTime(Number(volume.value)/100*.3,audioCtx.currentTime);
+    if(test)playTestBeep();
     live.textContent=imageReady?'Ääni päällä. Tunnustele kuvaa.':'Ääni päällä. Lataa kuva tai luo demokuva.';
-    // 3) Siirry tarkastelutilaan vasta äänien jälkeen
-    document.body.classList.add('inspect');
-    // Hiljennä ruudunlukija inspect-tilassa
-    if('speechSynthesis' in window) speechSynthesis.cancel();
-    live.setAttribute('aria-live','off');
-    details.setAttribute('aria-live','off');
-    wrap.focus({preventScroll:true});
-    if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
-    setTimeout(()=>sonify(cursor.x,cursor.y),260);
-  }).catch(e=>{live.textContent='Äänen käynnistys epäonnistui: '+(e&&e.message?e.message:'');});
+    return true;
+  }catch(e){live.textContent='Äänen käynnistys epäonnistui: '+(e&&e.message?e.message:'');return false;}
 }
-iphoneButton.addEventListener('click',enterInspect);
+
+function stopAudio(){
+  if(!audioCtx)return;
+  mainGain.gain.setTargetAtTime(0,audioCtx.currentTime,.03);
+  noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.03);
+  isAudioOn=false;
+  audioButton.textContent='Käynnistä ääni';
+}
+audioButton.addEventListener('click',()=>isAudioOn?stopAudio():startAudio(true));
+
+// iPhone-tarkastelutila.
+// KRIITTISTÄ iOS Safarille: buildAudioGraph() ja resume() täysin synkronisesti,
+// ei yhtään .then()/.catch()/await ennen niitä – muuten iOS hylkää user gesture -kontekstin.
+function enterInspect(){
+  if(!imageReady){live.textContent='Lataa ensin kuva tai luo demokuva.';return;}
+  try{
+    if(!audioCtx)buildAudioGraph();
+    audioCtx.resume();           // synkroninen kutsu, ei .then()
+    isAudioOn=true;
+    audioButton.textContent='Pysäytä ääni';
+    // Käynnistä testipiippi välittömästi – ei timeoutia
+    playTestBeep();
+  }catch(e){live.textContent='Äänen käynnistys epäonnistui: '+(e&&e.message?e.message:'');return;}
+  // UI-muutokset äänen käynnistyksen jälkeen
+  if('speechSynthesis'in window)speechSynthesis.cancel();
+  live.setAttribute('aria-live','off');
+  details.setAttribute('aria-live','off');
+  document.body.classList.add('inspect');
+  wrap.focus({preventScroll:true});
+  if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});
+  // Sonify pienellä viiveellä jotta canvas on renderöitynyt täyteen kokoon
+  setTimeout(()=>{
+    mainGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    mainGain.gain.setValueAtTime(Number(volume.value)/100*.3,audioCtx.currentTime);
+    sonify(cursor.x,cursor.y);
+  },150);
+}
+// Rekisteröidään sekä touchend että click – touchend laukeaa iOS:lla luotettavammin
+iphoneButton.addEventListener('touchend',e=>{e.preventDefault();enterInspect();},{passive:false});
+iphoneButton.addEventListener('click',e=>{if(e.detail!==0)return;enterInspect();});
 function loadImage(img){const maxW=1400,maxH=1000,scale=Math.min(maxW/img.naturalWidth,maxH/img.naturalHeight,1);canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);imageData=ctx.getImageData(0,0,canvas.width,canvas.height);imageReady=true;cursor={x:canvas.width/2,y:canvas.height/2};lastQuadrant='';live.textContent='Kuva ladattu. Käynnistä ääni ja tunnustele kuvaa.';details.textContent=canvas.width+' × '+canvas.height+' pikseliä prototyypin sisäisessä koossa.';placeCrosshair()}
 fileInput.addEventListener('change',()=>{const f=fileInput.files&&fileInput.files[0];if(!f)return;const url=URL.createObjectURL(f),img=new Image();img.onload=()=>{loadImage(img);URL.revokeObjectURL(url)};img.onerror=()=>{live.textContent='Kuvan lataaminen epäonnistui.';URL.revokeObjectURL(url)};img.src=url});
 demoButton.addEventListener('click',()=>{canvas.width=900;canvas.height=600;let grd=ctx.createLinearGradient(0,0,900,600);grd.addColorStop(0,'#0f172a');grd.addColorStop(.45,'#38bdf8');grd.addColorStop(1,'#fef08a');ctx.fillStyle=grd;ctx.fillRect(0,0,900,600);ctx.fillStyle='#052e16';ctx.beginPath();ctx.moveTo(0,500);ctx.bezierCurveTo(180,330,280,490,430,340);ctx.bezierCurveTo(560,220,700,420,900,250);ctx.lineTo(900,600);ctx.lineTo(0,600);ctx.fill();ctx.fillStyle='#f8fafc';ctx.beginPath();ctx.arc(580,175,72,0,Math.PI*2);ctx.fill();ctx.fillStyle='#be123c';ctx.beginPath();ctx.ellipse(265,245,85,125,-.2,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fecdd3';ctx.beginPath();ctx.arc(265,160,52,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#111827';ctx.lineWidth=18;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(210,260);ctx.lineTo(155,345);ctx.moveTo(320,260);ctx.lineTo(385,335);ctx.moveTo(240,365);ctx.lineTo(220,475);ctx.moveTo(290,365);ctx.lineTo(330,475);ctx.stroke();imageData=ctx.getImageData(0,0,900,600);imageReady=true;cursor={x:450,y:300};lastQuadrant='';live.textContent='Demokuva luotu. Käynnistä ääni ja tunnustele kuvaa.';details.textContent='Demossa on maisema, aurinko ja ihmishahmo.';placeCrosshair()});

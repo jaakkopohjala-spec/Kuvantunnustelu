@@ -122,6 +122,10 @@ function enterInspect(){
     live.textContent=imageReady?'Ääni päällä. Tunnustele kuvaa.':'Ääni päällä. Lataa kuva tai luo demokuva.';
     // 3) Siirry tarkastelutilaan vasta äänien jälkeen
     document.body.classList.add('inspect');
+    // Hiljennä ruudunlukija inspect-tilassa
+    if('speechSynthesis' in window) speechSynthesis.cancel();
+    live.setAttribute('aria-live','off');
+    details.setAttribute('aria-live','off');
     wrap.focus({preventScroll:true});
     if(document.documentElement.requestFullscreen){document.documentElement.requestFullscreen().catch(()=>{});}
     setTimeout(()=>sonify(cursor.x,cursor.y),260);
@@ -133,19 +137,79 @@ fileInput.addEventListener('change',()=>{const f=fileInput.files&&fileInput.file
 demoButton.addEventListener('click',()=>{canvas.width=900;canvas.height=600;let grd=ctx.createLinearGradient(0,0,900,600);grd.addColorStop(0,'#0f172a');grd.addColorStop(.45,'#38bdf8');grd.addColorStop(1,'#fef08a');ctx.fillStyle=grd;ctx.fillRect(0,0,900,600);ctx.fillStyle='#052e16';ctx.beginPath();ctx.moveTo(0,500);ctx.bezierCurveTo(180,330,280,490,430,340);ctx.bezierCurveTo(560,220,700,420,900,250);ctx.lineTo(900,600);ctx.lineTo(0,600);ctx.fill();ctx.fillStyle='#f8fafc';ctx.beginPath();ctx.arc(580,175,72,0,Math.PI*2);ctx.fill();ctx.fillStyle='#be123c';ctx.beginPath();ctx.ellipse(265,245,85,125,-.2,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fecdd3';ctx.beginPath();ctx.arc(265,160,52,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#111827';ctx.lineWidth=18;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(210,260);ctx.lineTo(155,345);ctx.moveTo(320,260);ctx.lineTo(385,335);ctx.moveTo(240,365);ctx.lineTo(220,475);ctx.moveTo(290,365);ctx.lineTo(330,475);ctx.stroke();imageData=ctx.getImageData(0,0,900,600);imageReady=true;cursor={x:450,y:300};lastQuadrant='';live.textContent='Demokuva luotu. Käynnistä ääni ja tunnustele kuvaa.';details.textContent='Demossa on maisema, aurinko ja ihmishahmo.';placeCrosshair()});
 function rgbToHsl(r,g,b){r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b);let h=0,s=0,l=(max+min)/2;if(max!==min){const d=max-min;s=l>.5?d/(2-max-min):d/(max+min);switch(max){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;case b:h=(r-g)/d+4;break}h/=6}return[h,s,l]}function getPixel(x,y){x=Math.max(0,Math.min(canvas.width-1,Math.round(x)));y=Math.max(0,Math.min(canvas.height-1,Math.round(y)));const i=(y*canvas.width+x)*4,d=imageData.data;return[d[i],d[i+1],d[i+2],d[i+3]]}function lum(r,g,b){return(.2126*r+.7152*g+.0722*b)/255}function edgeAmount(x,y){const l=getPixel(x-2,y),r=getPixel(x+2,y),u=getPixel(x,y-2),d=getPixel(x,y+2),dx=Math.abs(lum(...l)-lum(...r)),dy=Math.abs(lum(...u)-lum(...d));return Math.min(1,Math.sqrt(dx*dx+dy*dy)*2.8)}function currentMode(){return document.querySelector('input[name="mode"]:checked').value}function colorName(h,s,l){if(l<.14)return'lähes musta';if(l>.88&&s<.25)return'lähes valkoinen';if(s<.16)return l>.55?'vaalean harmaa':'tumma harmaa';const deg=h*360;if(deg<25||deg>=340)return'punainen';if(deg<50)return'oranssi';if(deg<70)return'keltainen';if(deg<155)return'vihreä';if(deg<200)return'syaani';if(deg<250)return'sininen';if(deg<290)return'violetti';return'magenta'}function quadrant(x,y){return(x<canvas.width/2?'vasen ':'oikea ')+(y<canvas.height/2?'ylä':'ala')}function describePosition(x,y){const h=x<canvas.width/3?'vasemmalla':x>canvas.width*2/3?'oikealla':'keskellä',v=y<canvas.height/3?'ylhäällä':y>canvas.height*2/3?'alhaalla':'keskivaiheilla';return v+' '+h}function speak(text,force=false){if(!speech.checked||!('speechSynthesis'in window))return;const now=performance.now();if(!force&&now-lastSpeak<1800)return;lastSpeak=now;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='fi-FI';u.rate=1.05;u.volume=.9;speechSynthesis.speak(u)}function maybeVibrate(edge,l){if(!haptics.checked||!('vibrate'in navigator))return;const now=performance.now(),threshold=.18+(100-Number(sensitivity.value))/260;if(edge>threshold&&now-lastVibrate>95){navigator.vibrate(Math.round(8+Math.min(28,edge*42)));lastVibrate=now}else if(l<.08&&now-lastVibrate>450){navigator.vibrate(5);lastVibrate=now}}
 function placeCrosshair(client){const rect=canvas.getBoundingClientRect();const cx=client?client.x:cursor.x/(canvas.width/rect.width),cy=client?client.y:cursor.y/(canvas.height/rect.height);crosshair.style.display='block';crosshair.style.left=cx+'px';crosshair.style.top=cy+'px'}
-function sonify(x,y,client){if(!imageReady||!imageData)return;cursor.x=Math.max(0,Math.min(canvas.width-1,x));cursor.y=Math.max(0,Math.min(canvas.height-1,y));const [r,g,b]=getPixel(cursor.x,cursor.y),[h,s,l]=rgbToHsl(r,g,b),edge=edgeAmount(cursor.x,cursor.y),mode=currentMode(),sens=Number(sensitivity.value)/100;let value=mode==='hue'?h:mode==='edge'?Math.min(1,edge*(.8+sens*1.8)):l;const target=85+Math.pow(value,.72)*(1200-85);smoothedFrequency=smoothedFrequency*(Number(smoothing.value)/100)+target*(1-Number(smoothing.value)/100);smoothedNoise=smoothedNoise*.6+Math.min(.22,edge*(.04+sens*.22))*.4;if(audioCtx&&isAudioOn){const t=audioCtx.currentTime;oscillator.frequency.setTargetAtTime(smoothedFrequency,t,.015);mainGain.gain.setTargetAtTime(Number(volume.value)/100*.3,t,.02);noiseGain.gain.setTargetAtTime(smoothedNoise,t,.02);filter.frequency.setTargetAtTime(450+s*2600,t,.03)}maybeVibrate(edge,l);placeCrosshair(client);const q=quadrant(cursor.x,cursor.y);if(q!==lastQuadrant){lastQuadrant=q;speak(q,true)}const edgeText=edge>.25?'selvä reuna tai kontrasti':edge>.12?'lievä reuna':'tasainen alue';live.innerHTML='<span class="swatch" style="background:rgb('+r+','+g+','+b+')"></span>'+colorName(h,s,l)+', '+edgeText+'; '+q;details.textContent='Sijainti: '+describePosition(cursor.x,cursor.y)+'. Kirkkaus '+Math.round(l*100)+' %, värikylläisyys '+Math.round(s*100)+' %, taajuus noin '+Math.round(smoothedFrequency)+' Hz.'}
+function sonify(x,y,client){
+  if(!imageReady||!imageData)return;
+  cursor.x=Math.max(0,Math.min(canvas.width-1,x));
+  cursor.y=Math.max(0,Math.min(canvas.height-1,y));
+  const [r,g,b]=getPixel(cursor.x,cursor.y),[h,s,l]=rgbToHsl(r,g,b),edge=edgeAmount(cursor.x,cursor.y),mode=currentMode(),sens=Number(sensitivity.value)/100;
+  let value=mode==='hue'?h:mode==='edge'?Math.min(1,edge*(.8+sens*1.8)):l;
+  const target=85+Math.pow(value,.72)*(1200-85);
+  smoothedFrequency=smoothedFrequency*(Number(smoothing.value)/100)+target*(1-Number(smoothing.value)/100);
+  smoothedNoise=smoothedNoise*.6+Math.min(.22,edge*(.04+sens*.22))*.4;
+  if(audioCtx&&isAudioOn){
+    const t=audioCtx.currentTime;
+    oscillator.frequency.setTargetAtTime(smoothedFrequency,t,.015);
+    // Pidä äänenvoimakkuus aina päällä sonify-kutsun aikana (korjaa iPhone-ongelma)
+    mainGain.gain.cancelScheduledValues(t);
+    mainGain.gain.setTargetAtTime(Number(volume.value)/100*.3,t,.02);
+    noiseGain.gain.setTargetAtTime(smoothedNoise,t,.02);
+    filter.frequency.setTargetAtTime(450+s*2600,t,.03);
+  }
+  maybeVibrate(edge,l);
+  placeCrosshair(client);
+  const inInspect=document.body.classList.contains('inspect');
+  const q=quadrant(cursor.x,cursor.y);
+  // Puhe ja aria-live vain normaalitilassa – inspect-tilassa ei puhuta, jotta
+  // ruudunlukija ei häiritse äänitunnustelua
+  if(!inInspect){
+    if(q!==lastQuadrant){lastQuadrant=q;speak(q,true);}
+    const edgeText=edge>.25?'selvä reuna tai kontrasti':edge>.12?'lievä reuna':'tasainen alue';
+    live.innerHTML='<span class="swatch" style="background:rgb('+r+','+g+','+b+')"></span>'+colorName(h,s,l)+', '+edgeText+'; '+q;
+    details.textContent='Sijainti: '+describePosition(cursor.x,cursor.y)+'. Kirkkaus '+Math.round(l*100)+' %, värikylläisyys '+Math.round(s*100)+' %, taajuus noin '+Math.round(smoothedFrequency)+' Hz.';
+  } else {
+    lastQuadrant=q;
+  }
+}
 function pointerToCanvas(e){const rect=canvas.getBoundingClientRect(),clientX=e.clientX-rect.left,clientY=e.clientY-rect.top;return{x:clientX*(canvas.width/rect.width),y:clientY*(canvas.height/rect.height),client:{x:clientX,y:clientY}}}
 function handlePointer(e){if(!imageReady)return;e.preventDefault();if(e.pointerType==='touch'&&!isAudioOn)startAudio(true);const p=pointerToCanvas(e);if(p.x<0||p.y<0||p.x>=canvas.width||p.y>=canvas.height)return;sonify(p.x,p.y,p.client)}
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);if(!isAudioOn)startAudio(true);handlePointer(e)});
 canvas.addEventListener('pointermove',handlePointer);
-canvas.addEventListener('pointerup',()=>{if(audioCtx&&isAudioOn)noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.08)});
-canvas.addEventListener('pointercancel',()=>{if(audioCtx&&isAudioOn)noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.08)});
-// iOS Safari: vapautetaan AudioContext ensimmäisellä sivun kosketuksella
-document.addEventListener('touchstart',function iOSUnlock(){
-  if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();
-},{passive:true,once:true});
+canvas.addEventListener('pointerup',()=>{
+  if(audioCtx&&isAudioOn&&!document.body.classList.contains('inspect'))
+    noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.08);
+});
+canvas.addEventListener('pointercancel',()=>{
+  if(audioCtx&&isAudioOn&&!document.body.classList.contains('inspect'))
+    noiseGain.gain.setTargetAtTime(0,audioCtx.currentTime,.08);
+});
+// iOS Safari -fallback: touchmove canvasilla inspect-tilassa
+// (varmistaa että sormen liike rekisteröityy vaikka pointermove ei toimisi)
+canvas.addEventListener('touchmove',e=>{
+  if(!document.body.classList.contains('inspect'))return;
+  e.preventDefault();
+  if(!imageReady||!isAudioOn)return;
+  const t=e.touches[0];
+  const p=pointerToCanvas({clientX:t.clientX,clientY:t.clientY});
+  if(p.x<0||p.y<0||p.x>=canvas.width||p.y>=canvas.height)return;
+  sonify(p.x,p.y,p.client);
+},{passive:false});
+canvas.addEventListener('touchstart',e=>{
+  if(!document.body.classList.contains('inspect'))return;
+  e.preventDefault();
+  if(!imageReady||!isAudioOn)return;
+  const t=e.touches[0];
+  const p=pointerToCanvas({clientX:t.clientX,clientY:t.clientY});
+  if(p.x<0||p.y<0||p.x>=canvas.width||p.y>=canvas.height)return;
+  sonify(p.x,p.y,p.client);
+},{passive:false});
 wrap.addEventListener('keydown',e=>{if(!imageReady)return;const keys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];if(!keys.includes(e.key))return;e.preventDefault();if(!isAudioOn)startAudio(true);let step=e.altKey?2:e.shiftKey?30:10;if(e.key==='ArrowLeft')cursor.x-=step;if(e.key==='ArrowRight')cursor.x+=step;if(e.key==='ArrowUp')cursor.y-=step;if(e.key==='ArrowDown')cursor.y+=step;sonify(cursor.x,cursor.y)});window.addEventListener('keydown',e=>{if(document.activeElement===wrap)return;if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)&&imageReady){wrap.focus();wrap.dispatchEvent(new KeyboardEvent('keydown',e))}});
-['touchmove','gesturestart','gesturechange','gestureend'].forEach(t=>document.addEventListener(t,e=>{if(document.body.classList.contains('inspect'))e.preventDefault()},{passive:false}));document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&document.body.classList.contains('inspect'))document.body.classList.remove('inspect')});
+['touchmove','gesturestart','gesturechange','gestureend'].forEach(t=>document.addEventListener(t,e=>{if(document.body.classList.contains('inspect'))e.preventDefault()},{passive:false}));document.addEventListener('fullscreenchange',()=>{
+  if(!document.fullscreenElement&&document.body.classList.contains('inspect')){
+    document.body.classList.remove('inspect');
+    live.setAttribute('aria-live','polite');
+    details.setAttribute('aria-live','polite');
+  }
+});
 ctx.fillStyle='#111827';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#e5e7eb';ctx.font='bold 34px system-ui,sans-serif';ctx.textAlign='center';ctx.fillText('Lataa kuva tai luo demokuva',canvas.width/2,canvas.height/2);
 </script>
 </body>
